@@ -1,0 +1,93 @@
+// Bundled sample configs (offline demo library).
+// Values are snapshots of the corresponding HF config.json files (marked in UI).
+
+export const SAMPLES = [
+  {
+    id: 'qwen3-moe-2layer',
+    name: 'Qwen3-MoE 2 层实验配置',
+    note: '本对话中分析过的 2 层截断配置(1.87B 总参 / 736M 激活)',
+    source: { kind: 'manual', name: 'Qwen3-MoE 2-layer' },
+    config: {
+      architectures: ['Qwen3MoeForCausalLM'], attention_bias: false, attention_dropout: 0.0,
+      bos_token_id: 151643, eos_token_id: 151645, decoder_sparse_step: 1, head_dim: 128,
+      hidden_act: 'silu', hidden_size: 2048, initializer_range: 0.02, intermediate_size: 6144,
+      max_position_embeddings: 262144, max_window_layers: 2, mlp_only_layers: [],
+      model_type: 'qwen3_moe', moe_intermediate_size: 768, norm_topk_prob: true,
+      num_attention_heads: 32, num_experts: 128, num_experts_per_tok: 8, num_hidden_layers: 2,
+      num_key_value_heads: 4, output_router_logits: false, rms_norm_eps: 1e-6,
+      rope_scaling: null, rope_theta: 10000000, router_aux_loss_coef: 0.001,
+      sliding_window: null, tie_word_embeddings: false, torch_dtype: 'bfloat16',
+      use_cache: true, use_sliding_window: false, vocab_size: 151936,
+    },
+  },
+  {
+    id: 'qwen3-30b-a3b',
+    name: 'Qwen/Qwen3-30B-A3B',
+    note: '48 层 MoE,128 专家 top-8(内置快照)',
+    source: { kind: 'huggingface', repoId: 'Qwen/Qwen3-30B-A3B', verified: false },
+    config: {
+      architectures: ['Qwen3MoeForCausalLM'], attention_bias: false, head_dim: 128,
+      hidden_act: 'silu', hidden_size: 2048, intermediate_size: 6144,
+      max_position_embeddings: 40960, mlp_only_layers: [], model_type: 'qwen3_moe',
+      moe_intermediate_size: 768, norm_topk_prob: true, num_attention_heads: 32,
+      num_experts: 128, num_experts_per_tok: 8, num_hidden_layers: 48,
+      num_key_value_heads: 4, rms_norm_eps: 1e-6, rope_theta: 10000000,
+      tie_word_embeddings: false, torch_dtype: 'bfloat16', vocab_size: 151936,
+    },
+  },
+  {
+    id: 'llama-3.1-8b',
+    name: 'meta-llama/Llama-3.1-8B',
+    note: '经典 dense 架构,GQA 32/8(内置快照)',
+    source: { kind: 'huggingface', repoId: 'meta-llama/Llama-3.1-8B', verified: false },
+    config: {
+      architectures: ['LlamaForCausalLM'], attention_bias: false, hidden_act: 'silu',
+      hidden_size: 4096, intermediate_size: 14336, max_position_embeddings: 131072,
+      model_type: 'llama', num_attention_heads: 32, num_hidden_layers: 32,
+      num_key_value_heads: 8, rms_norm_eps: 1e-5, rope_theta: 500000,
+      tie_word_embeddings: false, torch_dtype: 'bfloat16', vocab_size: 128256,
+    },
+  },
+  {
+    id: 'gpt2',
+    name: 'openai-community/gpt2',
+    note: 'GPT-2 small,124M,bbycroft 同款教学对象(内置快照)',
+    source: { kind: 'huggingface', repoId: 'openai-community/gpt2', verified: false },
+    config: {
+      architectures: ['GPT2LMHeadModel'], model_type: 'gpt2', n_embd: 768, n_head: 12,
+      n_layer: 12, n_positions: 1024, n_ctx: 1024, n_inner: null,
+      layer_norm_epsilon: 1e-5, vocab_size: 50257, torch_dtype: 'float32',
+    },
+  },
+  {
+    id: 'mixtral-8x7b',
+    name: 'mistralai/Mixtral-8x7B-v0.1',
+    note: '8 专家 top-2 的经典 MoE(内置快照)',
+    source: { kind: 'huggingface', repoId: 'mistralai/Mixtral-8x7B-v0.1', verified: false },
+    config: {
+      architectures: ['MixtralForCausalLM'], model_type: 'mixtral', hidden_act: 'silu',
+      hidden_size: 4096, intermediate_size: 14336, max_position_embeddings: 32768,
+      num_attention_heads: 32, num_experts_per_tok: 2, num_hidden_layers: 32,
+      num_key_value_heads: 8, num_local_experts: 8, rms_norm_eps: 1e-5,
+      rope_theta: 1000000, tie_word_embeddings: false, torch_dtype: 'bfloat16',
+      vocab_size: 32000,
+    },
+  },
+  {
+    id: 'deepseek-v3',
+    name: 'deepseek-ai/DeepSeek-V3',
+    note: '671B:61 层,MLA + 256 路由专家 + 1 共享专家(内置快照)',
+    source: { kind: 'huggingface', repoId: 'deepseek-ai/DeepSeek-V3', verified: false },
+    config: {
+      architectures: ['DeepseekV3ForCausalLM'], model_type: 'deepseek_v3',
+      hidden_act: 'silu', hidden_size: 7168, intermediate_size: 18432,
+      moe_intermediate_size: 2048, max_position_embeddings: 163840,
+      num_attention_heads: 128, num_key_value_heads: 128, num_hidden_layers: 61,
+      first_k_dense_replace: 3, n_routed_experts: 256, n_shared_experts: 1,
+      num_experts_per_tok: 8, norm_topk_prob: true,
+      q_lora_rank: 1536, kv_lora_rank: 512, qk_nope_head_dim: 128, qk_rope_head_dim: 64,
+      v_head_dim: 128, rms_norm_eps: 1e-6, rope_theta: 10000,
+      tie_word_embeddings: false, torch_dtype: 'bfloat16', vocab_size: 129280,
+    },
+  },
+];

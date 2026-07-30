@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Arch Viz — 任意开源模型架构 3D 可视化</title>
+<meta name="description" content="输入 HuggingFace repo id 或粘贴 config.json,交互式 3D 可视化任意 LLM 架构:GQA / MoE / MLA,参数预算,导出 PNG / SVG / GLB / .llmarch。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='12' y='12' width='76' height='76' rx='14' fill='%233b5bdb'/><rect x='28' y='28' width='44' height='12' rx='4' fill='white' opacity='.95'/><rect x='28' y='46' width='44' height='12' rx='4' fill='white' opacity='.75'/><rect x='28' y='64' width='44' height='12' rx='4' fill='white' opacity='.55'/></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div class="brand">🧊 LLM <span>Arch Viz</span></div>
+  <div class="loadbar">
+    <input type="text" id="repoInput" placeholder="HuggingFace repo id,如 Qwen/Qwen3-30B-A3B(或粘贴 HF 链接)" spellcheck="false">
+    <button class="primary" id="btnLoad">加载</button>
+    <select id="sampleSelect" title="内置示例"></select>
+  </div>
+  <div class="actions">
+    <button id="btnImport" title="导入 .llmarch 或 config.json 文件">导入</button>
+    <button id="btnPaste" title="粘贴/手动编辑 config.json(非开源模型通道)">粘贴配置</button>
+    <button id="btnView" title="切换 2D / 3D 视图">2D 视图</button>
+    <button id="btnAnim" title="数据流动画(按模型规模分级)">▶ 动画</button>
+    <div class="dropdown">
+      <button id="btnExport">导出 ▾</button>
+      <div class="menu" id="exportMenu">
+        <button data-x="png">PNG 截图(2×)</button>
+        <button data-x="poster">海报 PNG(含参数卡)</button>
+        <button data-x="svg">SVG 矢量图(2D)</button>
+        <button data-x="glb">GLB 3D 模型</button>
+        <button data-x="llmarch">.llmarch 工程文件</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div id="app">
+  <aside id="sidebar">
+    <h2 id="mName">—</h2>
+    <div class="sub" id="mSub">加载一个模型开始</div>
+    <div class="badges" id="mBadges"></div>
+    <table class="ptable" id="mParams"></table>
+    <div class="side-actions">
+      <button id="btnExpandAll">展开全部层</button>
+      <button id="btnCollapseAll">折叠全部</button>
+      <button id="btnResetCam">重置视角</button>
+    </div>
+    <details>
+      <summary>HF Token(gated 模型,可选)</summary>
+      <input type="text" id="tokenInput" placeholder="hf_...(仅存本机)" style="width:100%;margin-top:6px;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;font-family:ui-monospace,monospace;">
+    </details>
+    <details id="cfgDetails">
+      <summary>config.json 原文</summary>
+      <pre id="cfgPre"></pre>
+    </details>
+    <div class="note">
+      提示:点击 <b>×N 层堆叠</b> 或 <b>专家阵列</b> 展开;点击左侧 <b>Layer n</b> 标签折叠。
+      私有/非开源模型:用「粘贴配置」或拖入本地 config.json —— 一切解析均在你的浏览器本地完成,不上传任何内容。
+      <br><br>Inspired by <a href="https://bbycroft.net/llm" target="_blank" rel="noopener">bbycroft.net/llm</a>(独立实现)。
+    </div>
+  </aside>
+
+  <main id="stage">
+    <canvas id="gl"></canvas>
+    <div id="view2d"></div>
+    <div id="labels"></div>
+    <div id="tooltip"></div>
+    <div id="hint">拖拽旋转 · 滚轮缩放 · Shift/右键拖拽平移 · 悬停看张量 · 点击展开</div>
+    <div id="status"></div>
+  </main>
+</div>
+
+<div id="modal">
+  <div class="panel">
+    <h3>粘贴 / 手动编辑 config.json <span style="font-weight:400;font-size:12px;color:var(--muted)">(非开源模型可视化通道 · 全程本地解析)</span></h3>
+    <div class="row">
+      <span style="font-size:12.5px;color:var(--muted)">从模板开始:</span>
+      <select id="tplSelect"></select>
+      <button id="tplApply">填入模板</button>
+    </div>
+    <textarea id="cfgText" placeholder='{"model_type": "llama", "hidden_size": 4096, ...}' spellcheck="false"></textarea>
+    <div class="err" id="modalErr"></div>
+    <div class="foot">
+      <button id="modalCancel">取消</button>
+      <button class="primary" id="modalOk">可视化</button>
+    </div>
+  </div>
+</div>
+
+<div id="drop-overlay">松开以导入 .llmarch / config.json</div>
+<input type="file" id="fileInput" accept=".json,.llmarch,application/json" hidden>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
