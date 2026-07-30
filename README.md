@@ -9,6 +9,13 @@ GQA / MoE / MLA 结构、逐张量 shape 与参数量、折叠/展开、数据�
 
 ## 功能
 
+### v2(分支 `v2/inspector-lod`)新增
+
+- **Inspector 实时窗口**:悬停即显、点击钉住、面包屑导航(模型›Layer›组件›张量)、点击列表反向飞镜头;每个组件带数学公式(零依赖 HTML/CSS 公式渲染)、直觉解释与论文引用(20+ 条知识库);GQA 分组小图、KV cache 随 ctx 滑杆、每 token FLOPs
+- **元素级细节(LOD4)**:任意矩阵贴近即见元素格(片元着色器程序化生成,内存零增量),悬停显示 `W[row, col]` 与行列语义,Shift+点击钉住单个元素;attention 矩阵按 head/KV 组着色分带
+- **聚焦模式**:点击组件相机平滑飞至,其余降饱和,Esc 退出
+
+
 - **连接 HuggingFace**:输入 repo id → 自动拉取 config.json(gated 模型可填 HF token,仅存本机)
 - **适配器注册表**:llama 系(mistral/qwen2/qwen3/gemma/phi…)、qwen2/3-MoE、Mixtral、DeepSeek-V2/V3(MLA)、GPT-2;未知 model_type 走通用兜底解析(UI 明示降级)
 - **重复结构去重**:N 个相同层折叠为 "×N" 聚合体,点击懒展开;MoE 专家默认聚合、点击展开专家网格;单 InstancedDraw 渲染(全场景 1 个 draw call)

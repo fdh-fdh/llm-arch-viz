@@ -1,4 +1,5 @@
 // llm-arch-viz — app bootstrap & UI wiring (zero-dependency vanilla ES modules).
+// v2: Inspector real-time panel, focus mode, element-cell interaction, fly-to camera.
 
 import { Renderer } from './gl/renderer.js';
 import { OrbitCamera } from './gl/camera.js';
@@ -7,6 +8,7 @@ import { mat4ProjectPoint } from './gl/mat4.js';
 import { buildGraph, fmtParams, TIER_INFO } from './parser/ir.js';
 import { LayoutBuilder } from './layout.js';
 import { buildSVG } from './viz2d.js';
+import { renderInspector } from './inspector.js';
 import { exportLlmarch, parseLlmarch } from './llmarch.js';
 import { fetchModel } from './hf.js';
 import { downloadBlob, downloadText, exportPoster, exportGLB } from './export.js';
@@ -26,8 +28,15 @@ const state = {
   expandedExperts: new Set(),
   lru: [],
   hoverId: -1,
+  hoverCell: null,          // [col,row] in shader-grid coords
   anim: { on: false, raf: 0, t: 0, last: 0 },
   labelPool: [],
+  // selection (FR-D)
+  hoverSel: null,           // transient item under pointer
+  pinned: null,             // resolved pinned item (re-resolved after rebuild)
+  pinnedDesc: null,         // identity descriptor surviving rebuilds
+  focus: false,
+  kvCtx: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -62,7 +71,9 @@ function drawFrame() {
     const range = pulseRange();
     if (range) pulseY = range[0] + (range[1] - range[0]) * state.anim.t;
   }
-  renderer.render(camera, { hoverId: state.hoverId, pulseY });
+  renderer.render(camera, {
+    hoverId: state.hoverId, pulseY, focus: state.focus, hoverCell: state.hoverCell,
+  });
   positionLabels();
 }
 
@@ -84,7 +95,7 @@ function positionLabels() {
   const wrap = $('labels');
   if (!lay) return;
   const W = wrap.clientWidth, H = wrap.clientHeight;
-  const crowded = lay.labels.length > 80; // many layers expanded: keep only major labels
+  const crowded = lay.labels.length > 80;
   lay.labels.forEach((lb, i) => {
     if (crowded && (lb.kind === 'seg' || lb.kind === 'minor')) {
       const el0 = state.labelPool[i];
@@ -115,6 +126,144 @@ function positionLabels() {
 }
 
 // ---------------------------------------------------------------------------
+// Selection / Inspector (FR-D)
+// ---------------------------------------------------------------------------
+function descOf(item) {
+  if (!item) return null;
+  return {
+    type: item.type, title: item.title, si: item.si, li: item.li,
+    segLabel: item.segLabel, role: item.role, expertIdx: item.expertIdx,
+  };
+}
+
+function resolveDesc(desc) {
+  if (!desc || !state.layout) return null;
+  const items = state.layout.items;
+  for (let i = 0; i < state.layout.soa.count; i++) {
+    const it = items[i];
+    if (!it) continue;
+    if (it.type === desc.type && it.si === desc.si && it.li === desc.li &&
+        it.segLabel === desc.segLabel && it.role === desc.role &&
+        it.expertIdx === desc.expertIdx && it.title === desc.title) return it;
+  }
+  // fallback: same layer, same segment
+  for (let i = 0; i < state.layout.soa.count; i++) {
+    const it = items[i];
+    if (it && it.si === desc.si && it.li === desc.li && it.segLabel === desc.segLabel) return it;
+  }
+  return null;
+}
+
+let lastInspectorKey = null;
+function updateInspector() {
+  const sel = state.hoverSel || state.pinned;
+  const key = sel ? JSON.stringify(descOf(sel.element ? sel.element.item : sel)) + (sel.element ? `:${sel.element.row}:${sel.element.col}` : '') : 'model';
+  if (key === lastInspectorKey) return;
+  lastInspectorKey = key;
+  $('inspector').innerHTML = renderInspector(sel, state.graph, { kvCtx: state.kvCtx });
+  $('insPin').textContent = state.pinned ? '📌' : '';
+}
+
+function pinItem(item, element = null) {
+  state.pinned = element ? { element } : item;
+  state.pinnedDesc = descOf(element ? element.item : item);
+  state.pinnedElement = element ? { row: element.row, col: element.col } : null;
+  applyFocusDim(element ? element.item : item);
+  lastInspectorKey = null;
+  updateInspector();
+}
+
+function clearPin() {
+  state.pinned = null;
+  state.pinnedDesc = null;
+  state.pinnedElement = null;
+  state.focus = false;
+  if (state.layout) {
+    state.layout.soa.dim.fill(0);
+    renderer.setDim(state.layout.soa.dim);
+  }
+  lastInspectorKey = null;
+  updateInspector();
+  requestRender();
+}
+
+// Focus mode: dim everything outside the selected item's layer (FR-C6).
+function applyFocusDim(item) {
+  const lay = state.layout;
+  if (!lay || !item) return;
+  const dim = lay.soa.dim;
+  const sameLayer = item.si !== undefined && item.li !== undefined;
+  for (let i = 0; i < lay.soa.count; i++) {
+    const it = lay.items[i];
+    if (lay.soa.flag[i] === 1) { dim[i] = 0; continue; }        // keep spine
+    if (!it) { dim[i] = 1; continue; }
+    if (sameLayer) dim[i] = (it.si === item.si && it.li === item.li) ? 0 : 1;
+    else dim[i] = (it === item) ? 0 : 1;
+  }
+  state.focus = true;
+  renderer.setDim(dim);
+  requestRender();
+}
+
+function flyToItem(item) {
+  if (!item) return;
+  const size = Math.max(item.sx || 4, item.sz || 4, (item.sy || 1));
+  camera.flyTo({ target: [item.x, item.y, item.z], dist: Math.max(8, size * 2.4 + 5) });
+}
+
+// Inspector click delegation: breadcrumb / lists / layer nav / KV slider.
+$('inspector').addEventListener('click', (e) => {
+  const nav = e.target.closest('[data-nav]')?.dataset.nav;
+  if (!nav) return;
+  if (nav === 'model') { clearPin(); return; }
+  if (nav.startsWith('layer:')) {
+    const [, si, li] = nav.split(':').map(Number);
+    expandLayer(si, li);
+    const first = state.layout.items.find?.call ? null : null;
+    let target = null;
+    for (let i = 0; i < state.layout.soa.count; i++) {
+      const it = state.layout.items[i];
+      if (it && it.si === si && it.li === li && it.type === 'tensor') { target = it; break; }
+    }
+    if (target) { pinItem(target); flyToLayer(si, li); }
+    return;
+  }
+  if (nav.startsWith('seg:')) {
+    const [, siS, liS, , ...labelParts] = nav.split(':');
+    const si = Number(siS), li = Number(liS);
+    const label = labelParts.join(':');
+    expandLayer(si, li);
+    let target = null;
+    for (let i = 0; i < state.layout.soa.count; i++) {
+      const it = state.layout.items[i];
+      if (it && it.si === si && it.li === li && it.segLabel === label) { target = it; break; }
+    }
+    if (target) { pinItem(target); flyToItem(target); }
+    return;
+  }
+});
+$('inspector').addEventListener('input', (e) => {
+  const t = e.target;
+  if (t.dataset?.kv) {
+    const perTok = Number(t.dataset.kv);
+    const ctx = Number(t.value);
+    state.kvCtx = ctx;
+    const b = perTok * ctx;
+    const fmtB = b >= 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixed(1) + ' MB';
+    const cv = $('kvCtxVal'), bv = $('kvBytesVal');
+    if (cv) cv.textContent = ctx.toLocaleString('en-US');
+    if (bv) bv.textContent = fmtB;
+  }
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (state.pinned) clearPin();
+    $('modal').classList.remove('open');
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Layout / state rebuild
 // ---------------------------------------------------------------------------
 function rebuild(fit = false) {
@@ -123,8 +272,22 @@ function rebuild(fit = false) {
   state.layout.expandedRanges = builder.expandedRanges || [];
   renderer.setInstances(state.layout.soa);
   state.hoverId = -1;
+  state.hoverCell = null;
+  state.hoverSel = null;
+  // re-resolve pinned selection on the new layout
+  if (state.pinnedDesc) {
+    const it = resolveDesc(state.pinnedDesc);
+    if (it) {
+      state.pinned = state.pinnedElement ? { element: { item: it, ...state.pinnedElement } } : it;
+      applyFocusDim(it);
+    } else {
+      clearPin();
+    }
+  }
   if (fit) camera.fit(state.layout.bounds);
   if (state.viewMode === '2d') render2D();
+  lastInspectorKey = null;
+  updateInspector();
   requestRender();
 }
 
@@ -154,45 +317,77 @@ function collapseLayer(si, li) {
   rebuild();
 }
 
+function flyToLayer(si, li) {
+  const r = (state.layout.expandedRanges || []).find((x) => x.key === si + ':' + li);
+  if (r) camera.flyTo({ target: [0, (r.top + r.bottom) / 2, 0], dist: Math.max(14, (r.top - r.bottom) * 1.1) });
+}
+
 function applyAction(action) {
   if (!action) return;
-  if (action.kind === 'expandLayer') expandLayer(action.si, action.li);
+  if (action.kind === 'expandLayer') { expandLayer(action.si, action.li); flyToLayer(action.si, action.li); }
   else if (action.kind === 'collapseLayer') collapseLayer(action.si, action.li);
   else if (action.kind === 'expandExperts') { state.expandedExperts.add(action.si + ':' + action.li); rebuild(); }
   else if (action.kind === 'collapseExperts') { state.expandedExperts.delete(action.si + ':' + action.li); rebuild(); }
 }
 
 // ---------------------------------------------------------------------------
-// Hover / click picking
+// Hover / click picking (element-aware, FR-C4)
 // ---------------------------------------------------------------------------
 let lastPickTime = 0;
+let lastHoverUV = null;
 canvas.addEventListener('pointermove', (e) => {
   if (!state.layout || e.buttons) return;
   const now = performance.now();
-  if (now - lastPickTime < 33) return;    // ~30 Hz throttle
+  if (now - lastPickTime < 33) return;
   lastPickTime = now;
-  const idx = pick(camera, canvas, e.clientX, e.clientY, state.layout.soa);
+  const hit = pick(camera, canvas, e.clientX, e.clientY, state.layout.soa);
+  const idx = hit.index;
   const item = idx >= 0 ? state.layout.items[idx] : null;
   const tip = $('tooltip');
   if (item) {
-    if (state.hoverId !== idx) { state.hoverId = idx; requestRender(); }
+    let changed = state.hoverId !== idx;
+    state.hoverId = idx;
+    state.hoverSel = item;
+    lastHoverUV = { u: hit.u, v: hit.v };
+    // element cell under cursor
+    let elemLine = '';
+    if (item.elem && item.elem.rows > 1) {
+      const row = Math.min(item.elem.rows - 1, Math.floor(hit.v * item.elem.rows));
+      const col = Math.min(item.elem.cols - 1, Math.floor(hit.u * item.elem.cols));
+      const gc = [Math.floor(hit.u * Math.min(item.elem.cols, 512)), Math.floor(hit.v * Math.min(item.elem.rows, 512))];
+      if (!state.hoverCell || state.hoverCell[0] !== gc[0] || state.hoverCell[1] !== gc[1]) changed = true;
+      state.hoverCell = gc;
+      state.hoverElem = { row, col };
+      elemLine = `<div class="tl hl">W[${row}, ${col}] · 第${row} ${item.elem.rowSem || '行'} × 第${col} ${item.elem.colSem || '列'}</div>`;
+    } else {
+      if (state.hoverCell) changed = true;
+      state.hoverCell = null;
+      state.hoverElem = null;
+    }
+    if (changed) requestRender();
     tip.style.display = 'block';
     tip.innerHTML = `<div class="tt">${escapeHtml(item.title)}</div>` +
-      (item.lines || []).map((l) => `<div class="tl">${escapeHtml(l)}</div>`).join('');
+      (item.lines || []).map((l) => `<div class="tl">${escapeHtml(l)}</div>`).join('') + elemLine;
     const rect = canvas.getBoundingClientRect();
-    let tx = e.clientX - rect.left + 16, ty = e.clientY - rect.top + 14;
+    const tx = e.clientX - rect.left + 16, ty = e.clientY - rect.top + 14;
     tip.style.left = Math.min(tx, rect.width - 440) + 'px';
-    tip.style.top = Math.min(ty, rect.height - 160) + 'px';
-    canvas.style.cursor = item.action ? 'pointer' : 'default';
+    tip.style.top = Math.min(ty, rect.height - 180) + 'px';
+    canvas.style.cursor = 'pointer';
+    updateInspector();
   } else {
-    if (state.hoverId !== -1) { state.hoverId = -1; requestRender(); }
+    if (state.hoverId !== -1) { state.hoverId = -1; state.hoverCell = null; requestRender(); }
+    state.hoverSel = null;
     tip.style.display = 'none';
     canvas.style.cursor = 'default';
+    updateInspector();
   }
 });
 canvas.addEventListener('pointerleave', () => {
   state.hoverId = -1;
+  state.hoverCell = null;
+  state.hoverSel = null;
   $('tooltip').style.display = 'none';
+  updateInspector();
   requestRender();
 });
 
@@ -202,9 +397,20 @@ canvas.addEventListener('pointerup', (e) => {
   if (!downPos || !state.layout) return;
   const moved = Math.hypot(e.clientX - downPos[0], e.clientY - downPos[1]);
   downPos = null;
-  if (moved > 5) return; // was a drag
-  const idx = pick(camera, canvas, e.clientX, e.clientY, state.layout.soa);
-  if (idx >= 0) applyAction(state.layout.items[idx]?.action);
+  if (moved > 5) return;
+  const hit = pick(camera, canvas, e.clientX, e.clientY, state.layout.soa);
+  const item = hit.index >= 0 ? state.layout.items[hit.index] : null;
+  if (!item) { if (state.pinned) clearPin(); return; }
+  if (item.action) { applyAction(item.action); return; }
+  // pin: shift+click on a matrix pins the element, click pins the component
+  if (e.shiftKey && item.elem && item.elem.rows > 1) {
+    const row = Math.min(item.elem.rows - 1, Math.floor(hit.v * item.elem.rows));
+    const col = Math.min(item.elem.cols - 1, Math.floor(hit.u * item.elem.cols));
+    pinItem(item, { item, row, col });
+  } else {
+    pinItem(item);
+    flyToItem(item);
+  }
 });
 
 function escapeHtml(s) {
@@ -212,7 +418,7 @@ function escapeHtml(s) {
 }
 
 // ---------------------------------------------------------------------------
-// Sidebar
+// Sidebar (model card)
 // ---------------------------------------------------------------------------
 function updateSidebar() {
   const g = state.graph;
@@ -246,7 +452,6 @@ function updateSidebar() {
 
   $('cfgPre').textContent = JSON.stringify(g.rawConfig, null, 2);
 
-  // tier-driven controls
   const totalLayers = g.stacks.reduce((a, s) => a + s.count, 0);
   const canExpandAll = totalLayers <= tierMax();
   $('btnExpandAll').disabled = !canExpandAll;
@@ -266,8 +471,12 @@ function loadConfig(config, source) {
   state.expanded = new Set();
   state.expandedExperts = new Set();
   state.lru = [];
+  state.pinned = null;
+  state.pinnedDesc = null;
+  state.pinnedElement = null;
+  state.focus = false;
+  state.kvCtx = null;
   stopAnim();
-  // default: expand the first layer of the first stack (bbycroft-style sample layer)
   expandDefault(graph);
   updateSidebar();
   rebuild(true);
@@ -277,7 +486,6 @@ function loadConfig(config, source) {
 function expandDefault(graph) {
   state.expanded.add('0:0');
   state.lru.push('0:0');
-  // MoE 小专家数(≤64)默认直接展开专家网格
   const seg = graph.stacks[0]?.segments.find((s) => s.kind === 'moe');
   if (seg && seg.meta.experts <= 64) state.expandedExperts.add('0:0');
 }
@@ -308,7 +516,6 @@ $('btnLoad').onclick = async () => {
 };
 $('repoInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnLoad').click(); });
 
-// samples
 {
   const sel = $('sampleSelect');
   sel.innerHTML = '<option value="">内置示例…</option>' +
@@ -332,6 +539,7 @@ $('btnExpandAll').onclick = () => {
 };
 $('btnCollapseAll').onclick = () => {
   state.expanded.clear(); state.expandedExperts.clear(); state.lru = [];
+  clearPin();
   rebuild(true);
 };
 $('btnResetCam').onclick = () => { if (state.layout) camera.fit(state.layout.bounds); };
@@ -386,10 +594,10 @@ $('exportMenu').addEventListener('click', async (e) => {
   try {
     if (x === 'png') {
       status('渲染 2× 截图…');
-      downloadBlob(await renderer.exportPNG(camera, {}, 2), `${name}.png`);
+      downloadBlob(await renderer.exportPNG(camera, { focus: state.focus }, 2), `${name}.png`);
     } else if (x === 'poster') {
       status('合成海报…');
-      const blob = await renderer.exportPNG(camera, {}, 2);
+      const blob = await renderer.exportPNG(camera, { focus: state.focus }, 2);
       downloadBlob(await exportPoster(blob, state.graph), `${name}_poster.png`);
     } else if (x === 'svg') {
       downloadText(buildSVG(state.graph), `${name}.svg`, 'image/svg+xml');
@@ -478,12 +686,12 @@ try {
 
 window.addEventListener('resize', () => requestRender());
 
+// debug/test hook
+window.__viz = { state, applyAction, rebuild, camera, pinItem, clearPin, expandLayer };
+
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
-// debug/test hook
-window.__viz = { state, applyAction, rebuild, camera };
-
 applyViewMode();
 {
   const q = new URLSearchParams(location.search);

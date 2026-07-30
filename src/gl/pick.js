@@ -13,7 +13,8 @@ function unproject(m, x, y, z) {
   return [px / pw, py / pw, pz / pw];
 }
 
-// Returns instance index or -1. soa: {pos, scale, flag, count}; pickableFlagMax: skip flags > max.
+// Returns {index, u, v} (u,v = element-grid coords: u along x/cols, v along z/rows)
+// or {index: -1}. soa: {pos, scale, flag, count}; pickableFlagMax: skip flags > max.
 export function pick(camera, canvas, clientX, clientY, soa, pickableFlagMax = 2.5) {
   const rect = canvas.getBoundingClientRect();
   const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -46,5 +47,13 @@ export function pick(camera, canvas, clientX, clientY, soa, pickableFlagMax = 2.
       best = i;
     }
   }
-  return best;
+  if (best < 0) return { index: -1 };
+  // hit point -> box-local uv (u along x = cols, v along z = rows), matching
+  // the renderer's top-face uv convention used by the element-cell shader.
+  const i3 = best * 3;
+  const hx = soa.scale[i3] || 1e-6, hz = soa.scale[i3 + 2] || 1e-6;
+  const px = o[0] + d[0] * bestT, pz = o[2] + d[2] * bestT;
+  const u = Math.min(1, Math.max(0, (px - (soa.pos[i3] - hx / 2)) / hx));
+  const v = Math.min(1, Math.max(0, (pz - (soa.pos[i3 + 2] - hz / 2)) / hz));
+  return { index: best, u, v };
 }

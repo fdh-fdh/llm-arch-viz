@@ -51,18 +51,27 @@ export class LayoutBuilder {
     this.scale = new Float32Array(cap * 3);
     this.color = new Float32Array(cap * 3);
     this.flag = new Float32Array(cap);
+    this.grid = new Float32Array(cap * 2);   // element-cell grid [cols, rows] for the shader
+    this.sub = new Float32Array(cap * 2);    // subdiv bands [bands, groupSize]
+    this.dim = new Float32Array(cap);        // focus-mode dimming
     this.items = new Array(cap);
   }
 
   _ensure(n) {
     if (n <= this.capacity) return;
     while (this.capacity < n) this.capacity *= 2;
-    const old = { pos: this.pos, scale: this.scale, color: this.color, flag: this.flag, items: this.items, count: this.count };
+    const old = {
+      pos: this.pos, scale: this.scale, color: this.color, flag: this.flag,
+      grid: this.grid, sub: this.sub, dim: this.dim, items: this.items, count: this.count,
+    };
     this._alloc(this.capacity);
     this.pos.set(old.pos.subarray(0, old.count * 3));
     this.scale.set(old.scale.subarray(0, old.count * 3));
     this.color.set(old.color.subarray(0, old.count * 3));
     this.flag.set(old.flag.subarray(0, old.count));
+    this.grid.set(old.grid.subarray(0, old.count * 2));
+    this.sub.set(old.sub.subarray(0, old.count * 2));
+    this.dim.set(old.dim.subarray(0, old.count));
     for (let i = 0; i < old.count; i++) this.items[i] = old.items[i];
   }
 
@@ -74,9 +83,31 @@ export class LayoutBuilder {
     this.scale[i3] = sx; this.scale[i3 + 1] = sy; this.scale[i3 + 2] = sz;
     this.color[i3] = rgb[0]; this.color[i3 + 1] = rgb[1]; this.color[i3 + 2] = rgb[2];
     this.flag[i] = flag;
+    // element grid: shader density is clamped (float precision / moiré guard);
+    // tooltips use the true dims stored on item.elem.
+    const i2 = i * 2;
+    if (item && item.elem) {
+      this.grid[i2] = Math.min(item.elem.cols, 512);
+      this.grid[i2 + 1] = Math.min(item.elem.rows, 512);
+    } else { this.grid[i2] = 0; this.grid[i2 + 1] = 0; }
+    if (item && item.subdiv) {
+      this.sub[i2] = item.subdiv[0]; this.sub[i2 + 1] = item.subdiv[1];
+    } else { this.sub[i2] = 0; this.sub[i2 + 1] = 0; }
+    this.dim[i] = 0;
     this.items[i] = item || null;
-    if (item) { item.x = x; item.y = y; item.z = z; item.sy = sy; }
+    if (item) { item.x = x; item.y = y; item.z = z; item.sx = sx; item.sy = sy; item.sz = sz; item.idx = i; }
     return i;
+  }
+
+  // head / KV-group color bands for attention matrices (FR-C2)
+  _subdiv(seg, role) {
+    const m = seg.meta || {};
+    if (seg.kind !== 'attn') return null;
+    if (role === 'q_proj' || role === 'q_b_proj') return [m.heads, Math.max(1, Math.round(m.heads / m.kvHeads))];
+    if (role === 'k_proj' || role === 'v_proj') return [m.kvHeads, 1];
+    if (role === 'qkv') return [3, 1];
+    if (role === 'kv_b_proj') return [m.heads, 1];
+    return null;
   }
 
   connector(yTop, yBottom, x = 0, z = 0) {
@@ -105,6 +136,7 @@ export class LayoutBuilder {
     // ---- input ----
     boxG(0, y, 0, 3.2, 0.5, 1.6, COLORS.io, 0, {
       type: 'io', title: 'input_ids', lines: [`[B, T] · token ids < ${meta.vocab.toLocaleString('en-US')}`],
+      kb: ['io_input'], path: ['input_ids'],
     });
     this.labels.push({ x: 0, y: y + 0.9, z: 0, text: 'input_ids', kind: 'minor' });
     let prevBottom = y - 0.25;
@@ -119,6 +151,9 @@ export class LayoutBuilder {
         type: 'tensor', title: 'Token Embedding',
         lines: graph.embedding.tensors.map((tt) => `${tt.name}  ${fmtShape(tt.shape)}  ${fmtParams(tt.params)}`),
         params: meta.params.embedding,
+        kb: graph.embedding.tensors.length > 1 ? ['embedding', 'pos_embedding_learned'] : ['embedding'],
+        path: ['embed_tokens'],
+        elem: { cols: t.shape[1], rows: t.shape[0], name: t.name, colSem: 'hidden 维', rowSem: 'token id' },
       });
       this.labels.push({ x: sx / 2 + 1.2, y, z: 0, text: `Embedding ${fmtParams(meta.params.embedding)}`, kind: 'block' });
       prevBottom = y - 0.4;
@@ -147,7 +182,8 @@ export class LayoutBuilder {
           const sx = L(meta.hidden) * 1.6, sz = L(meta.hidden) * 1.15;
           this.connector(prevBottom, y + h / 2);
           boxG(0, y, 0, sx, h, sz, COLORS.stackAgg, 2, {
-            type: 'stackAgg', si, liStart: li, run,
+            type: 'stackAgg', si, liStart: li, run, stackRef: stack,
+            kb: ['residual'], path: [stack.label + ' ×' + run],
             title: `${stack.label} × ${run}`,
             lines: [
               `层 ${globalLayer + li} – ${globalLayer + li + run - 1}`,
@@ -172,6 +208,9 @@ export class LayoutBuilder {
       boxG(0, y, 0, sx, 0.3, 1.4, COLORS.norm, 0, {
         type: 'tensor', title: 'Final RMSNorm',
         lines: graph.finalNorm.tensors.map((t) => `${t.name}  ${fmtShape(t.shape)}`),
+        kb: [graph.finalNorm.tensors.some((t) => t.role === 'bias') ? 'layernorm' : 'rmsnorm'],
+        path: ['final_norm'],
+        elem: { cols: meta.hidden, rows: 1, name: graph.finalNorm.tensors[0].name, colSem: 'hidden 维', rowSem: '' },
       });
       this.labels.push({ x: sx / 2 + 1.2, y, z: 0, text: 'Final Norm', kind: 'minor' });
       prevBottom = y - 0.15;
@@ -188,6 +227,8 @@ export class LayoutBuilder {
         lines: tied
           ? [`tied → wte 转置  [${meta.hidden.toLocaleString('en-US')} × ${meta.vocab.toLocaleString('en-US')}]`]
           : graph.lmHead.tensors.map((t) => `${t.name}  ${fmtShape(t.shape)}  ${fmtParams(t.params)}`),
+        kb: ['lm_head'], path: ['lm_head'],
+        elem: { cols: meta.hidden, rows: meta.vocab, name: tied ? 'embed_tokens.weight (tied)' : (graph.lmHead.tensors[0] || {}).name, colSem: 'hidden 维', rowSem: '词表 token' },
       });
       this.labels.push({ x: sx / 2 + 1.2, y, z: 0, text: tied ? 'LM Head (tied)' : `LM Head ${fmtParams(meta.params.lmHead)}`, kind: 'block' });
       prevBottom = y - 0.4;
@@ -197,12 +238,16 @@ export class LayoutBuilder {
     // ---- logits ----
     boxG(0, y, 0, 3.2, 0.5, 1.6, COLORS.io, 0, {
       type: 'io', title: 'logits', lines: [`[B, T, ${meta.vocab.toLocaleString('en-US')}]`],
+      kb: ['io_logits', 'softmax_logits'], path: ['logits'],
     });
     this.connector(prevBottom, y + 0.25);
     this.labels.push({ x: 0, y: y - 0.9, z: 0, text: 'logits', kind: 'minor' });
 
     return {
-      soa: { pos: this.pos, scale: this.scale, color: this.color, flag: this.flag, count: this.count },
+      soa: {
+        pos: this.pos, scale: this.scale, color: this.color, flag: this.flag,
+        grid: this.grid, sub: this.sub, dim: this.dim, count: this.count,
+      },
       items: this.items,
       labels: this.labels,
       bounds,
@@ -222,6 +267,7 @@ export class LayoutBuilder {
         this.connector(prevBottom, y + 0.3);
         boxG(0, y, 0, 0.7, 0.6, 0.7, COLORS.add, 0, {
           type: 'add', title: '+ residual', lines: ['残差连接'],
+          kb: ['residual'], si, li, globalIdx,
         });
         prevBottom = y - 0.3;
         y -= 0.6 + GAP * 0.7;
@@ -231,6 +277,8 @@ export class LayoutBuilder {
         boxG(0, y, 0, sx, 0.28, 1.3, COLORS.norm, 0, {
           type: 'tensor', title: seg.label,
           lines: seg.tensors.map((t) => `${tensorName(t.name, globalIdx)}  ${fmtShape(t.shape)}`),
+          kb: seg.kb, si, li, globalIdx, segLabel: seg.label,
+          elem: { cols: graph.meta.hidden, rows: 1, name: tensorName(seg.tensors[0].name, globalIdx), colSem: 'hidden 维 (γ[col])', rowSem: '' },
         });
         prevBottom = y - 0.14;
         y -= 0.28 + GAP * 0.7;
@@ -254,6 +302,9 @@ export class LayoutBuilder {
                 ? `MLA: kv_lora ${seg.meta.kvLora}${seg.meta.qLora ? ' · q_lora ' + seg.meta.qLora : ''}`
                 : `${seg.meta.variant}: ${seg.meta.heads} heads / ${seg.meta.kvHeads} KV · head_dim ${seg.meta.headDim}`,
             ],
+            kb: seg.kb, si, li, globalIdx, segLabel: seg.label, segMeta: seg.meta, role: b.t.role,
+            elem: { cols: b.t.shape[1], rows: b.t.shape[0], name: tensorName(b.t.name, globalIdx), colSem: '输入通道', rowSem: '输出通道' },
+            subdiv: this._subdiv(seg, b.t.role),
           });
           cx += b.sx + 1.0;
         }
@@ -265,6 +316,9 @@ export class LayoutBuilder {
           boxG(0, y, 0, sx, 0.55, sz, roleColor(t.role), 0, {
             type: 'tensor', title: `${seg.label} · ${t.role}`,
             lines: [`${tensorName(t.name, globalIdx)}`, `${fmtShape(t.shape)}  ${fmtParams(t.params)}`],
+            kb: seg.kb, si, li, globalIdx, segLabel: seg.label, segMeta: seg.meta, role: t.role,
+            elem: { cols: t.shape[1], rows: t.shape[0], name: tensorName(t.name, globalIdx), colSem: '输入通道', rowSem: '输出通道' },
+            subdiv: this._subdiv(seg, t.role),
           });
           prevBottom = y - 0.275;
           y -= 0.55 + GAP * 0.7;
@@ -282,6 +336,8 @@ export class LayoutBuilder {
           boxG(cx + b.sx / 2, y, 0, b.sx, 0.55, b.sz, COLORS.mlp, 0, {
             type: 'tensor', title: `${seg.label} · ${b.t.role}`,
             lines: [`${tensorName(b.t.name, globalIdx)}`, `${fmtShape(b.t.shape)}  ${fmtParams(b.t.params)}`],
+            kb: seg.kb, si, li, globalIdx, segLabel: seg.label, segMeta: seg.meta, role: b.t.role,
+            elem: { cols: b.t.shape[1], rows: b.t.shape[0], name: tensorName(b.t.name, globalIdx), colSem: '输入通道', rowSem: '输出通道 (神经元)' },
           });
           cx += b.sx + 1.0;
         }
@@ -292,6 +348,8 @@ export class LayoutBuilder {
           boxG(0, y, 0, L(t.shape[1]), 0.55, L(t.shape[0]), COLORS.mlp, 0, {
             type: 'tensor', title: `${seg.label} · ${t.role}`,
             lines: [`${tensorName(t.name, globalIdx)}`, `${fmtShape(t.shape)}  ${fmtParams(t.params)}`],
+            kb: seg.kb, si, li, globalIdx, segLabel: seg.label, segMeta: seg.meta, role: t.role,
+            elem: { cols: t.shape[1], rows: t.shape[0], name: tensorName(t.name, globalIdx), colSem: '输入通道 (神经元)', rowSem: '输出通道' },
           });
           prevBottom = y - 0.275;
           y -= 0.55 + GAP * 0.7;
@@ -316,6 +374,8 @@ export class LayoutBuilder {
         `${tensorName(rt.name, globalIdx)}  ${fmtShape(rt.shape)}`,
         `softmax → top-${m.topK}${m.normTopK ? ' → renormalize' : ''}`,
       ],
+      kb: ['moe_router'], si, li, globalIdx, segLabel: seg.label, segMeta: m, role: 'router',
+      elem: { cols: rt.shape[1], rows: rt.shape[0], name: tensorName(rt.name, globalIdx), colSem: 'hidden 维', rowSem: '专家 id' },
     });
     this.labels.push({ x: L(rt.shape[1]) * 0.4 + 1.2, y, z: 0, text: `Router top-${m.topK}/${m.experts}`, kind: 'seg' });
     prevBottom = y - 0.25;
@@ -331,7 +391,8 @@ export class LayoutBuilder {
       const h = Math.min(1.0 + m.experts * 0.012, 4.5);
       this.connector(prevBottom, y + h / 2);
       boxG(0, y, 0, sx, h, sz, COLORS.expertAgg, 2, {
-        type: 'expertAgg', si, li,
+        type: 'expertAgg', si, li, globalIdx, segLabel: seg.label, segMeta: m,
+        kb: ['moe_expert', 'moe_router'],
         title: `专家阵列 × ${m.experts}`,
         lines: [
           `每专家 SwiGLU:${fmtParams(expParams)}`,
@@ -359,11 +420,13 @@ export class LayoutBuilder {
         const x = (c - (cols - 1) / 2) * gx;
         const z = (r - (rows - 1) / 2) * gz;
         boxG(x, y0, z, ew, 0.5, ed, COLORS.expert, 0, {
-          type: 'expert', title: `Expert ${e}`,
+          type: 'expert', title: `Expert ${e}`, expertIdx: e,
           lines: [
             ...seg.expertProto.tensors.map((t) => `${tensorName(t.name, globalIdx, e)}  ${fmtShape(t.shape)}`),
             `参数 ${fmtParams(expParams)}`,
           ],
+          kb: ['moe_expert'], si, li, globalIdx, segLabel: seg.label, segMeta: m,
+          elem: { cols: graph.meta.hidden, rows: m.expertInter, name: tensorName(seg.expertProto.tensors[0].name, globalIdx, e), colSem: 'hidden 维', rowSem: '专家神经元' },
         });
       }
       prevBottom = y0 - 0.25;
@@ -377,6 +440,7 @@ export class LayoutBuilder {
       this.connector(prevBottom, y + 0.25);
       boxG(0, y, 0, sx, 0.5, sz, COLORS.shared, 0, {
         type: 'tensor', title: `共享专家 × ${sp.count}`,
+        kb: ['shared_expert'], si, li, globalIdx, segLabel: seg.label, segMeta: m,
         lines: sp.tensors.map((t) => `${tensorName(t.name, globalIdx)}  ${fmtShape(t.shape)}`).concat([`参数 ${fmtParams(spParams)}(每 token 恒定激活)`]),
       });
       prevBottom = y - 0.25;
@@ -387,6 +451,7 @@ export class LayoutBuilder {
     this.connector(prevBottom, y + 0.25);
     boxG(0, y, 0, 1.6, 0.5, 1.0, COLORS.router, 0, {
       type: 'add', title: 'Σ 加权合并', lines: [`top-${m.topK} 专家输出加权求和`],
+      kb: ['moe_expert'], si, li, globalIdx,
     });
     this._lastBottom = y - 0.25;
     return y - 0.5 - GAP * 0.7;
