@@ -73,6 +73,8 @@ export class OrbitCamera {
     const dy = bounds.max[1] - bounds.min[1];
     const dz = bounds.max[2] - bounds.min[2];
     const radius = Math.max(1, Math.hypot(dx, dy, dz) / 2);
+    this.yaw = 0.5;          // reset to the default pleasant angle
+    this.pitch = 0.25;
     this.target = [cx, cy, cz];
     this.dist = radius / Math.tan(this.fovy / 2) * 1.15;
     this.far = Math.max(5000, this.dist * 10);

@@ -116,6 +116,15 @@ export class LayoutBuilder {
     this.box(x, (yTop + yBottom) / 2, z, 0.16, h, 0.16, COLORS.connector, 1, null);
   }
 
+  // Residual bypass rail (FR-C1): out from the branch point, down beside the
+  // layer, back into the ⊕ node — makes the residual stream's detour visible.
+  rail(yFrom, yTo, railX) {
+    const c = COLORS.connector;
+    this.box(railX / 2, yFrom, 0, Math.abs(railX), 0.12, 0.12, c, 1, null);            // out
+    this.box(railX, (yFrom + yTo) / 2, 0, 0.12, Math.abs(yFrom - yTo), 0.12, c, 1, null); // down
+    this.box(railX / 2 + 0.35, yTo, 0, Math.abs(railX) - 0.7, 0.12, 0.12, c, 1, null); // back in
+  }
+
   build(graph, state) {
     this.count = 0;
     this.labels = [];
@@ -260,26 +269,38 @@ export class LayoutBuilder {
   _layer(graph, si, li, globalIdx, y, prevBottom, state, boxG) {
     const stack = graph.stacks[si];
     const meta = graph.meta;
+    const railX = -(L(meta.hidden) * 1.9 + 1.2);
+    let branchStartY = prevBottom;   // residual branches off before the pre-norm
     this.labels.push({ x: -L(meta.hidden) * 1.4 - 1.5, y: y - 2, z: 0, text: `Layer ${globalIdx}`, kind: 'layer', action: { kind: 'collapseLayer', si, li } });
 
     for (const seg of stack.segments) {
       if (seg.kind === 'add') {
         this.connector(prevBottom, y + 0.3);
         boxG(0, y, 0, 0.7, 0.6, 0.7, COLORS.add, 0, {
-          type: 'add', title: '+ residual', lines: ['残差连接'],
+          type: 'add', title: '+ residual', lines: ['残差连接:主干 + 子层输出'],
           kb: ['residual'], si, li, globalIdx,
         });
+        this.rail(branchStartY, y, railX);   // visible residual detour
         prevBottom = y - 0.3;
         y -= 0.6 + GAP * 0.7;
+        branchStartY = prevBottom;           // next branch starts after this ⊕
       } else if (seg.kind === 'norm') {
         const sx = L(meta.hidden);
         this.connector(prevBottom, y + 0.14);
-        boxG(0, y, 0, sx, 0.28, 1.3, COLORS.norm, 0, {
-          type: 'tensor', title: seg.label,
-          lines: seg.tensors.map((t) => `${tensorName(t.name, globalIdx)}  ${fmtShape(t.shape)}`),
-          kb: seg.kb, si, li, globalIdx, segLabel: seg.label,
-          elem: { cols: graph.meta.hidden, rows: 1, name: tensorName(seg.tensors[0].name, globalIdx), colSem: 'hidden 维 (γ[col])', rowSem: '' },
-        });
+        // γ (weight) strip + β (bias) strip when present — bbycroft's two columns (FR-C1)
+        const hasBias = seg.tensors.length > 1;
+        const strips = hasBias
+          ? [{ t: seg.tensors[0], sym: 'γ', z: -0.85 }, { t: seg.tensors[1], sym: 'β', z: 0.85 }]
+          : [{ t: seg.tensors[0], sym: 'γ', z: 0 }];
+        for (const st of strips) {
+          boxG(0, y, st.z, sx, 0.28, hasBias ? 0.9 : 1.3, COLORS.norm, 0, {
+            type: 'tensor', title: `${seg.label} · ${st.sym}`,
+            lines: [`${tensorName(st.t.name, globalIdx)}  ${fmtShape(st.t.shape)}`,
+                    st.sym === 'γ' ? '逐维缩放(可学习)' : '逐维偏置(可学习)'],
+            kb: seg.kb, si, li, globalIdx, segLabel: seg.label, role: st.sym,
+            elem: { cols: graph.meta.hidden, rows: 1, name: tensorName(st.t.name, globalIdx), colSem: `hidden 维 (${st.sym}[col])`, rowSem: '' },
+          });
+        }
         prevBottom = y - 0.14;
         y -= 0.28 + GAP * 0.7;
       } else if (seg.kind === 'attn') {
@@ -338,6 +359,7 @@ export class LayoutBuilder {
             lines: [`${tensorName(b.t.name, globalIdx)}`, `${fmtShape(b.t.shape)}  ${fmtParams(b.t.params)}`],
             kb: seg.kb, si, li, globalIdx, segLabel: seg.label, segMeta: seg.meta, role: b.t.role,
             elem: { cols: b.t.shape[1], rows: b.t.shape[0], name: tensorName(b.t.name, globalIdx), colSem: '输入通道', rowSem: '输出通道 (神经元)' },
+            subdiv: [8, 1],
           });
           cx += b.sx + 1.0;
         }

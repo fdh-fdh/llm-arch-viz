@@ -58,6 +58,7 @@ in vec2 vGrid;
 in vec2 vSub;
 in float vDim;
 uniform float uFocus;        // 1 = focus mode active (dim others)
+uniform float uCellMode;     // 0 = cells off, 1 = auto distance fade, 2 = boosted
 uniform vec2 uHoverCell;     // hovered element cell (col,row)
 uniform float uHoverCellOn;
 out vec4 outColor;
@@ -74,10 +75,11 @@ void main() {
   vec3 c = vColor;
 
   // ---- LOD4 procedural element cells (zero-memory bbycroft look) ----
-  if (vGrid.x > 0.5 && vFlag < 0.5) {
+  if (vGrid.x > 0.5 && vFlag < 0.5 && uCellMode > 0.5) {
     vec2 g = vUV * vGrid;
     vec2 fw = fwidth(g);
-    float fade = clamp(1.6 - max(fw.x, fw.y), 0.0, 1.0);  // cells < ~1px fade out
+    float k = uCellMode > 1.5 ? 3.2 : 1.6;                 // boost mode keeps cells visible further out
+    float fade = clamp(k - max(fw.x, fw.y) * (uCellMode > 1.5 ? 0.6 : 1.0), 0.0, 1.0);
     if (fade > 0.01) {
       vec2 cell = floor(g);
       float h = hash21(cell);
@@ -179,6 +181,7 @@ export class Renderer {
     this.uPulseY = u('uPulseY');
     this.uInstanceBase = u('uInstanceBase');
     this.uFocus = u('uFocus');
+    this.uCellMode = u('uCellMode');
     this.uHoverCell = u('uHoverCell');
     this.uHoverCellOn = u('uHoverCellOn');
   }
@@ -275,6 +278,7 @@ export class Renderer {
     gl.uniform1f(this.uPulseY, opts.pulseY ?? -1e9);
     gl.uniform1f(this.uInstanceBase, 0);
     gl.uniform1f(this.uFocus, opts.focus ? 1 : 0);
+    gl.uniform1f(this.uCellMode, opts.cellMode ?? 1);
     gl.uniform2f(this.uHoverCell, opts.hoverCell?.[0] ?? -1, opts.hoverCell?.[1] ?? -1);
     gl.uniform1f(this.uHoverCellOn, opts.hoverCell ? 1 : 0);
     gl.bindVertexArray(this.vao);

@@ -95,5 +95,32 @@ const byId = Object.fromEntries(SAMPLES.map((s) => [s.id, s]));
   check('inspector stackAgg lists pipeline', insAgg.includes('层内管线') && insAgg.includes('data-nav="seg:'));
 }
 
+// 6. v2.2: γ/β strips, residual rails, MLP neuron bands, LOD metadata
+{
+  const gGpt = buildGraph(byId['gpt2'].config, byId['gpt2'].source);
+  const b2 = new LayoutBuilder();
+  const st = { expanded: new Set(['0:0']), expandedExperts: new Set() };
+  const layG = b2.build(gGpt, st);
+  const itemsG = layG.items.slice(0, layG.soa.count).filter(Boolean);
+  const gammas = itemsG.filter((it) => it.role === 'γ');
+  const betas = itemsG.filter((it) => it.role === 'β');
+  check('gpt2 layer has γ strips', gammas.length >= 2, String(gammas.length));
+  check('gpt2 layer has β strips (LayerNorm bias)', betas.length >= 2, String(betas.length));
+
+  const gLl = buildGraph(byId['llama-3.1-8b'].config, byId['llama-3.1-8b'].source);
+  const layL = b2.build(gLl, st);
+  const itemsL = layL.items.slice(0, layL.soa.count).filter(Boolean);
+  check('llama RMSNorm has γ only', itemsL.some((it) => it.role === 'γ') && !itemsL.some((it) => it.role === 'β'));
+  const up = itemsL.find((it) => it.role === 'up_proj');
+  check('llama mlp neuron bands [8,1]', up && up.subdiv && up.subdiv[0] === 8, JSON.stringify(up && up.subdiv));
+
+  // residual rails: expanded layer adds flag=1 rail boxes (3 per ⊕, 2 ⊕ per layer)
+  const collapsed = b2.build(gLl, { expanded: new Set(), expandedExperts: new Set() });
+  const nConnCollapsed = Array.from({length: collapsed.soa.count}, (_, i) => collapsed.soa.flag[i]).filter((f) => f === 1).length;
+  const expanded = b2.build(gLl, st);
+  const nConnExpanded = Array.from({length: expanded.soa.count}, (_, i) => expanded.soa.flag[i]).filter((f) => f === 1).length;
+  check('residual rails present (>=6 extra rail segments)', nConnExpanded >= nConnCollapsed + 6, `${nConnCollapsed} -> ${nConnExpanded}`);
+}
+
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

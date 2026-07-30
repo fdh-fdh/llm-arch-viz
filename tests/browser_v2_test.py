@@ -104,6 +104,38 @@ try:
         print("gpt2 layernorm knowledge:", "层归一化" in ins)
         if "层归一化" not in ins: errors.append("gpt2 layernorm knowledge missing")
 
+        # 7. v2.2: LOD select toggles cellMode; gpt2 layer shows rails + γ/β strips
+        page.select_option("#lodSelect", "0")
+        page.wait_for_timeout(200)
+        cm = page.evaluate("__viz.state.cellMode")
+        print("lod off:", cm == 0)
+        if cm != 0: errors.append("lodSelect off failed")
+        page.select_option("#lodSelect", "2")
+        page.wait_for_timeout(200)
+        cm = page.evaluate("__viz.state.cellMode")
+        print("lod boost:", cm == 2)
+        if cm != 2: errors.append("lodSelect boost failed")
+        page.select_option("#lodSelect", "1")
+        n_strips = page.evaluate("""
+          (() => { let g=0,b=0;
+            for (let i=0;i<__viz.state.layout.soa.count;i++){
+              const it=__viz.state.layout.items[i];
+              if (it && it.role==='γ') g++; if (it && it.role==='β') b++; }
+            return [g,b]; })()
+        """)
+        print("gpt2 γ/β strips:", n_strips)
+        if n_strips[0] < 2 or n_strips[1] < 2: errors.append("γ/β strips missing")
+        page.evaluate("__viz.clearPin(); __viz.camera.fit(__viz.state.layout.bounds)")
+        page.wait_for_timeout(500)
+        page.screenshot(path="/tmp/v22_gpt2_layer.png")
+
+        # deepseek default cellMode = 0 (T3)
+        page.select_option("#sampleSelect", "deepseek-v3")
+        page.wait_for_timeout(800)
+        cm = page.evaluate("__viz.state.cellMode")
+        print("T3 default cells off:", cm == 0)
+        if cm != 0: errors.append("T3 default cellMode wrong")
+
         browser.close()
 finally:
     server.terminate()

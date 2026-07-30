@@ -37,6 +37,7 @@ const state = {
   pinnedDesc: null,         // identity descriptor surviving rebuilds
   focus: false,
   kvCtx: null,
+  cellMode: 1,              // FR-C5: 0 off / 1 auto / 2 boost
 };
 
 // ---------------------------------------------------------------------------
@@ -73,6 +74,7 @@ function drawFrame() {
   }
   renderer.render(camera, {
     hoverId: state.hoverId, pulseY, focus: state.focus, hoverCell: state.hoverCell,
+    cellMode: state.cellMode,
   });
   positionLabels();
 }
@@ -477,6 +479,9 @@ function loadConfig(config, source) {
   state.focus = false;
   state.kvCtx = null;
   stopAnim();
+  state.cellMode = graph.meta.tier === 'T3' ? 0 : 1;
+  const lodSel = document.getElementById('lodSelect');
+  if (lodSel) lodSel.value = String(state.cellMode);
   expandDefault(graph);
   updateSidebar();
   rebuild(true);
@@ -543,6 +548,10 @@ $('btnCollapseAll').onclick = () => {
   rebuild(true);
 };
 $('btnResetCam').onclick = () => { if (state.layout) camera.fit(state.layout.bounds); };
+$('lodSelect').onchange = () => {
+  state.cellMode = Number($('lodSelect').value);
+  requestRender();
+};
 
 $('btnView').onclick = () => {
   state.viewMode = state.viewMode === '3d' ? '2d' : '3d';
@@ -594,10 +603,10 @@ $('exportMenu').addEventListener('click', async (e) => {
   try {
     if (x === 'png') {
       status('渲染 2× 截图…');
-      downloadBlob(await renderer.exportPNG(camera, { focus: state.focus }, 2), `${name}.png`);
+      downloadBlob(await renderer.exportPNG(camera, { focus: state.focus, cellMode: state.cellMode }, 2), `${name}.png`);
     } else if (x === 'poster') {
       status('合成海报…');
-      const blob = await renderer.exportPNG(camera, { focus: state.focus }, 2);
+      const blob = await renderer.exportPNG(camera, { focus: state.focus, cellMode: state.cellMode }, 2);
       downloadBlob(await exportPoster(blob, state.graph), `${name}_poster.png`);
     } else if (x === 'svg') {
       downloadText(buildSVG(state.graph), `${name}.svg`, 'image/svg+xml');

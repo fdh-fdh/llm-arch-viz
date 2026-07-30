@@ -15,6 +15,13 @@ GQA / MoE / MLA 结构、逐张量 shape 与参数量、折叠/展开、数据�
 - **元素级细节(LOD4)**:任意矩阵贴近即见元素格(片元着色器程序化生成,内存零增量),悬停显示 `W[row, col]` 与行列语义,Shift+点击钉住单个元素;attention 矩阵按 head/KV 组着色分带
 - **聚焦模式**:点击组件相机平滑飞至,其余降饱和,Esc 退出
 
+### v2.2(分支 `v2.2/lod`)新增
+
+- **残差旁路可见**:展开层内画出残差流的"出线-旁路-汇入 ⊕"轨道(bbycroft 式数据流拓扑)
+- **γ/β 独立细条**:LayerNorm 的 γ 与 β 渲染为两根并排细条(RMSNorm 只有 γ),逐维可悬停
+- **LOD 手动档**:工具栏"格子:自动/增强/关闭"——增强模式在更远距离保持元素格可见;T3 超大模型默认关闭(聚焦时可手动开)
+- **MLP 神经元分带**:gate/up 矩阵沿 intermediate 轴显示 8 段神经元分组色带
+
 
 - **连接 HuggingFace**:输入 repo id → 自动拉取 config.json(gated 模型可填 HF token,仅存本机)
 - **适配器注册表**:llama 系(mistral/qwen2/qwen3/gemma/phi…)、qwen2/3-MoE、Mixtral、DeepSeek-V2/V3(MLA)、GPT-2;未知 model_type 走通用兜底解析(UI 明示降级)

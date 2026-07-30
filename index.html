@@ -21,6 +21,11 @@
     <button id="btnPaste" title="粘贴/手动编辑 config.json(非开源模型通道)">粘贴配置</button>
     <button id="btnView" title="切换 2D / 3D 视图">2D 视图</button>
     <button id="btnAnim" title="数据流动画(按模型规模分级)">▶ 动画</button>
+    <select id="lodSelect" title="元素格细节层级(LOD):自动=随距离淡入淡出">
+      <option value="1">格子:自动</option>
+      <option value="2">格子:增强</option>
+      <option value="0">格子:关闭</option>
+    </select>
     <div class="dropdown">
       <button id="btnExport">导出 ▾</button>
       <div class="menu" id="exportMenu">
