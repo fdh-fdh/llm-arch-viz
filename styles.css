@@ -204,3 +204,43 @@ button:disabled:hover { border-color: var(--line); color: var(--ink); }
 .fm-bigop .fm-op { font-size: 1.35em; line-height: 1; }
 .fm-bigop .fm-above, .fm-bigop .fm-below { font-size: 9.5px; line-height: 1.1; }
 .fm-stack { display: inline-flex; flex-direction: column; line-height: 1; vertical-align: middle; }
+
+
+/* ============ v2.3: guided tour (FR-F1) ============ */
+#tourBar {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; background: #fff;
+  border: 1.5px solid var(--line); border-radius: 14px; padding: 10px 12px;
+  box-shadow: 0 10px 36px rgba(20,30,60,.18); z-index: 60; max-width: min(640px, 92%);
+}
+#tourBar[hidden] { display: none; }
+#tourInfo { min-width: 0; }
+.tour-t { font-size: 13px; }
+.tour-t span { color: var(--muted); font-size: 11.5px; margin-right: 6px; }
+.tour-c { font-size: 12px; color: var(--muted); line-height: 1.5; margin-top: 2px; }
+#tourExit { border: none; font-size: 15px; padding: 4px 8px; color: var(--muted); }
+
+/* ============ v2.3: tensor search (FR-G3) ============ */
+.search-box { position: relative; margin: 0 0 10px; }
+.search-box input {
+  width: 100%; padding: 8px 11px; border: 1.5px solid var(--line); border-radius: 9px;
+  font-size: 12.5px; outline: none; font-family: ui-monospace, Menlo, monospace;
+}
+.search-box input:focus { border-color: var(--accent); }
+#searchResults {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); background: #fff;
+  border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(20,30,60,.14);
+  z-index: 70; max-height: 260px; overflow-y: auto; padding: 4px;
+}
+#searchResults[hidden] { display: none; }
+.sr-item {
+  display: block; width: 100%; text-align: left; border: none; background: none;
+  padding: 7px 9px; border-radius: 7px; cursor: pointer; font-size: 11.5px;
+  font-family: ui-monospace, Menlo, monospace; word-break: break-all;
+}
+.sr-item:hover { background: var(--accent-soft); }
+.sr-item .sr-meta { color: var(--muted); font-family: inherit; font-size: 10.5px; }
+
+/* ============ v2.3: 2D clickable blocks (FR-G2) ============ */
+.v2d-nav { cursor: pointer; }
+.v2d-nav:hover rect:first-of-type { stroke-width: 3; filter: brightness(1.03); }

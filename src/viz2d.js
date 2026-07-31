@@ -19,14 +19,15 @@ export function buildSVG(graph, { width = 760 } = {}) {
   const boxW = 300;
   const rows = [];
 
-  rows.push({ kind: 'io', label: 'input_ids', sub: `[B, T] · vocab ${meta.vocab.toLocaleString('en-US')}` });
-  rows.push({ kind: 'embedding', label: 'Token Embedding', sub: `${fmtShape(graph.embedding.tensors[0].shape)} · ${fmtParams(meta.params.embedding)}` });
+  rows.push({ kind: 'io', label: 'input_ids', sub: `[B, T] · vocab ${meta.vocab.toLocaleString('en-US')}`, nav: 'path:input_ids' });
+  rows.push({ kind: 'embedding', label: 'Token Embedding', sub: `${fmtShape(graph.embedding.tensors[0].shape)} · ${fmtParams(meta.params.embedding)}`, nav: 'path:embed_tokens' });
 
   let globalIdx = 0;
-  for (const stack of graph.stacks) {
+  graph.stacks.forEach((stack, si) => {
     const segRows = [];
+    const navFor = (seg) => `seg:${si}:0:${seg.kind}:${seg.label}`;
     for (const seg of stack.segments) {
-      if (seg.kind === 'norm') segRows.push({ kind: 'norm', label: seg.label, sub: `RMSNorm(${meta.hidden})` });
+      if (seg.kind === 'norm') segRows.push({ kind: 'norm', label: seg.label, sub: `RMSNorm(${meta.hidden})`, nav: navFor(seg) });
       else if (seg.kind === 'attn') {
         const mats = seg.tensors.filter((t) => t.kind === 'matrix');
         segRows.push({
@@ -35,15 +36,17 @@ export function buildSVG(graph, { width = 760 } = {}) {
             ? `kv_lora ${seg.meta.kvLora} · ${seg.meta.heads} heads`
             : `${seg.meta.heads} heads / ${seg.meta.kvHeads} KV · head_dim ${seg.meta.headDim}`,
           detail: mats.map((t) => `${t.role} ${fmtShape(t.shape)}`),
+          nav: navFor(seg),
         });
       } else if (seg.kind === 'mlp') {
-        segRows.push({ kind: 'mlp', label: seg.label, sub: `intermediate ${seg.meta.inter.toLocaleString('en-US')} · ${seg.meta.act}` });
+        segRows.push({ kind: 'mlp', label: seg.label, sub: `intermediate ${seg.meta.inter.toLocaleString('en-US')} · ${seg.meta.act}`, nav: navFor(seg) });
       } else if (seg.kind === 'moe') {
         const ep = seg.expertProto.tensors.reduce((a, t) => a + t.params, 0);
         segRows.push({
           kind: 'moe', label: seg.label,
           sub: `router ${meta.hidden}→${seg.meta.experts} · 每专家 ${fmtParams(ep)}${seg.meta.sharedExperts ? ` · 共享×${seg.meta.sharedExperts}` : ''}`,
           moe: seg.meta,
+          nav: navFor(seg),
         });
       } else if (seg.kind === 'add') {
         segRows.push({ kind: 'add', label: '⊕ residual' });
@@ -51,15 +54,16 @@ export function buildSVG(graph, { width = 760 } = {}) {
     }
     rows.push({ kind: 'stack', label: `${stack.label} × ${stack.count}`, sub: `每层 ${fmtParams(stack.perLayer)} · 激活 ${fmtParams(stack.perLayerActive)}`, segRows, count: stack.count });
     globalIdx += stack.count;
-  }
+  });
 
   rows.push({ kind: 'norm', label: 'Final RMSNorm', sub: `(${meta.hidden})` });
   rows.push({
     kind: 'lmHead',
     label: graph.lmHead.tied ? 'LM Head(tied)' : 'LM Head',
     sub: graph.lmHead.tied ? '与 embedding 共享权重' : `${fmtShape(graph.lmHead.tensors[0].shape)} · ${fmtParams(meta.params.lmHead)}`,
+    nav: 'path:lm_head',
   });
-  rows.push({ kind: 'io', label: 'logits', sub: `[B, T, ${meta.vocab.toLocaleString('en-US')}]` });
+  rows.push({ kind: 'io', label: 'logits', sub: `[B, T, ${meta.vocab.toLocaleString('en-US')}]`, nav: 'path:logits' });
 
   // ---- render ----
   let y = 84;
@@ -70,6 +74,7 @@ export function buildSVG(graph, { width = 760 } = {}) {
     const isAdd = row.kind === 'add';
     const h = isAdd ? 24 : (row.detail ? 44 + row.detail.length * 13 : 44);
     const col = C[row.kind] || '#888';
+    if (row.nav && !isAdd) parts.push(`<g class="v2d-nav" data-nav="${esc(row.nav)}">`);
     if (isAdd) {
       parts.push(`<circle cx="${cx}" cy="${y + 12}" r="10" fill="#fff" stroke="#5c6a82" stroke-width="1.4"/><text x="${cx}" y="${y + 16}" text-anchor="middle" font-size="13" fill="#334">+</text>`);
     } else {
@@ -89,6 +94,7 @@ export function buildSVG(graph, { width = 760 } = {}) {
         }
       }
     }
+    if (row.nav && !isAdd) parts.push('</g>');
     y += h;
     return h;
   };

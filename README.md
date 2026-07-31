@@ -22,6 +22,13 @@ GQA / MoE / MLA 结构、逐张量 shape 与参数量、折叠/展开、数据�
 - **LOD 手动档**:工具栏"格子:自动/增强/关闭"——增强模式在更远距离保持元素格可见;T3 超大模型默认关闭(聚焦时可手动开)
 - **MLP 神经元分带**:gate/up 矩阵沿 intermediate 轴显示 8 段神经元分组色带
 
+### v2.3(分支 `v2.3/tour`)新增
+
+- **引导游览**:🎬 按钮开启 bbycroft 式 walkthrough——站点由 IR 自动生成(输入→Embedding→Norm→注意力→残差→MoE 路由/专家→…→logits,MoE 模型 15 站左右),每站相机飞至 + Inspector 讲解 + 一句导语;←/→/空格导航,DeepSeek 这类"dense 前置 + MoE 主体"结构会分别走两种层
+- **张量搜索**:侧栏搜索框(快捷键 /),`37 k_proj` 直达第 37 层的 k_proj——自动展开该层、钉住并飞达
+- **2D 视图接入 Inspector**:2D 分层图的块可点击,与 3D 共用同一选择状态——移动端也有完整讲解体验
+- **本地 safetensors 导入**:拖入 .safetensors 只读文件头(权重零上传、零加载),从张量名/shape 启发式推断架构(llama/qwen/qwen-MoE/Mixtral/GPT-2 命名),推断项在控制台列明
+
 
 - **连接 HuggingFace**:输入 repo id → 自动拉取 config.json(gated 模型可填 HF token,仅存本机)
 - **适配器注册表**:llama 系(mistral/qwen2/qwen3/gemma/phi…)、qwen2/3-MoE、Mixtral、DeepSeek-V2/V3(MLA)、GPT-2;未知 model_type 走通用兜底解析(UI 明示降级)

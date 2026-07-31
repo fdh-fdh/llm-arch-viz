@@ -19,6 +19,7 @@
   <div class="actions">
     <button id="btnImport" title="导入 .llmarch 或 config.json 文件">导入</button>
     <button id="btnPaste" title="粘贴/手动编辑 config.json(非开源模型通道)">粘贴配置</button>
+    <button id="btnTour" title="引导游览:从输入到输出走一遍架构(←/→/空格导航)">🎬 游览</button>
     <button id="btnView" title="切换 2D / 3D 视图">2D 视图</button>
     <button id="btnAnim" title="数据流动画(按模型规模分级)">▶ 动画</button>
     <select id="lodSelect" title="元素格细节层级(LOD):自动=随距离淡入淡出">
@@ -45,6 +46,11 @@
     <div class="sub" id="mSub">加载一个模型开始</div>
     <div class="badges" id="mBadges"></div>
     <table class="ptable" id="mParams"></table>
+
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="🔎 搜索张量 / 层,如 37 k_proj 或 gate" spellcheck="false" autocomplete="off">
+      <div id="searchResults" hidden></div>
+    </div>
 
     <div class="ins-panel">
       <div class="ins-head">🔍 Inspector <span id="insPin"></span>
@@ -80,6 +86,15 @@
     <div id="tooltip"></div>
     <div id="hint">拖拽旋转 · 滚轮缩放 · Shift/右键拖拽平移 · 悬停看张量 · 点击展开</div>
     <div id="status"></div>
+    <div id="tourBar" hidden>
+      <button id="tourPrev" title="上一步 (←)">◂</button>
+      <div id="tourInfo">
+        <div class="tour-t"><span id="tourStep"></span> <b id="tourLabel"></b></div>
+        <div class="tour-c" id="tourCaption"></div>
+      </div>
+      <button id="tourNext" class="primary" title="继续 (→ / 空格)">继续 ▸</button>
+      <button id="tourExit" title="退出游览 (Esc)">×</button>
+    </div>
   </main>
 </div>
 
@@ -100,8 +115,8 @@
   </div>
 </div>
 
-<div id="drop-overlay">松开以导入 .llmarch / config.json</div>
-<input type="file" id="fileInput" accept=".json,.llmarch,application/json" hidden>
+<div id="drop-overlay">松开以导入 .llmarch / config.json / .safetensors(仅读文件头)</div>
+<input type="file" id="fileInput" accept=".json,.llmarch,.safetensors,application/json" hidden>
 
 <script type="module" src="src/main.js"></script>
 </body>

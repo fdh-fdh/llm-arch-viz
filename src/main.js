@@ -13,6 +13,8 @@ import { exportLlmarch, parseLlmarch } from './llmarch.js';
 import { fetchModel } from './hf.js';
 import { downloadBlob, downloadText, exportPoster, exportGLB } from './export.js';
 import { SAMPLES } from './samples.js';
+import { buildTour, resolveStation } from './tour.js';
+import { readSafetensorsFile, inferConfigFromTensors } from './safetensors.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('gl');
@@ -213,21 +215,29 @@ function flyToItem(item) {
   camera.flyTo({ target: [item.x, item.y, item.z], dist: Math.max(8, size * 2.4 + 5) });
 }
 
-// Inspector click delegation: breadcrumb / lists / layer nav / KV slider.
-$('inspector').addEventListener('click', (e) => {
-  const nav = e.target.closest('[data-nav]')?.dataset.nav;
-  if (!nav) return;
+// Shared nav handler (Inspector breadcrumb/lists + 2D SVG blocks, FR-G2).
+function findItem(pred) {
+  for (let i = 0; i < state.layout.soa.count; i++) {
+    const it = state.layout.items[i];
+    if (it && pred(it)) return it;
+  }
+  return null;
+}
+function handleNav(nav) {
+  if (!nav || !state.layout) return;
+  const is3d = state.viewMode === '3d';
   if (nav === 'model') { clearPin(); return; }
+  if (nav.startsWith('path:')) {
+    const key = nav.slice(5);
+    const target = findItem((it) => (it.path && it.path[0] === key) || (it.type === 'io' && it.title === key));
+    if (target) { pinItem(target); if (is3d) flyToItem(target); }
+    return;
+  }
   if (nav.startsWith('layer:')) {
     const [, si, li] = nav.split(':').map(Number);
     expandLayer(si, li);
-    const first = state.layout.items.find?.call ? null : null;
-    let target = null;
-    for (let i = 0; i < state.layout.soa.count; i++) {
-      const it = state.layout.items[i];
-      if (it && it.si === si && it.li === li && it.type === 'tensor') { target = it; break; }
-    }
-    if (target) { pinItem(target); flyToLayer(si, li); }
+    const target = findItem((it) => it.si === si && it.li === li && it.type === 'tensor');
+    if (target) { pinItem(target); if (is3d) flyToLayer(si, li); }
     return;
   }
   if (nav.startsWith('seg:')) {
@@ -235,14 +245,134 @@ $('inspector').addEventListener('click', (e) => {
     const si = Number(siS), li = Number(liS);
     const label = labelParts.join(':');
     expandLayer(si, li);
-    let target = null;
-    for (let i = 0; i < state.layout.soa.count; i++) {
-      const it = state.layout.items[i];
-      if (it && it.si === si && it.li === li && it.segLabel === label) { target = it; break; }
-    }
-    if (target) { pinItem(target); flyToItem(target); }
-    return;
+    const target = findItem((it) => it.si === si && it.li === li && it.segLabel === label);
+    if (target) { pinItem(target); if (is3d) flyToItem(target); }
   }
+}
+$('inspector').addEventListener('click', (e) => {
+  handleNav(e.target.closest('[data-nav]')?.dataset.nav);
+});
+$('view2d').addEventListener('click', (e) => {
+  handleNav(e.target.closest('[data-nav]')?.dataset.nav);
+});
+
+// ---------------------------------------------------------------------------
+// Guided tour (FR-F1)
+// ---------------------------------------------------------------------------
+const tourState = { active: false, stations: [], i: 0 };
+function startTour() {
+  if (!state.graph) return;
+  tourState.stations = buildTour(state.graph);
+  tourState.active = true;
+  tourState.i = -1;
+  $('tourBar').hidden = false;
+  $('btnTour').textContent = '🎬 游览中';
+  gotoStation(0);
+}
+function endTour() {
+  tourState.active = false;
+  $('tourBar').hidden = true;
+  $('btnTour').textContent = '🎬 游览';
+  clearPin();
+}
+function gotoStation(i) {
+  const N = tourState.stations.length;
+  if (i < 0) return;
+  if (i >= N) { endTour(); status('游览结束 🎉 — 自由探索吧,悬停任何组件都有讲解'); return; }
+  tourState.i = i;
+  const st = tourState.stations[i];
+  if (st.expand) expandLayer(st.expand.si, st.expand.li);
+  const item = resolveStation(st, state.layout);
+  if (item) {
+    pinItem(item);
+    if (state.viewMode === '3d') flyToItem(item);
+  }
+  $('tourStep').textContent = `${i + 1}/${N}`;
+  $('tourLabel').textContent = st.label;
+  $('tourCaption').textContent = st.caption;
+  $('tourPrev').disabled = i === 0;
+  $('tourNext').textContent = i === N - 1 ? '完成 ✓' : '继续 ▸';
+}
+$('btnTour').onclick = () => (tourState.active ? endTour() : startTour());
+$('tourNext').onclick = () => gotoStation(tourState.i + 1);
+$('tourPrev').onclick = () => gotoStation(tourState.i - 1);
+$('tourExit').onclick = endTour;
+
+// ---------------------------------------------------------------------------
+// Tensor search (FR-G3)
+// ---------------------------------------------------------------------------
+function searchModel(query) {
+  const g = state.graph;
+  if (!g || !query.trim()) return [];
+  const tokens = query.trim().toLowerCase().split(/[\s./_]+/).filter(Boolean);
+  const numTok = tokens.find((t) => /^\d+$/.test(t));
+  const textToks = tokens.filter((t) => !/^\d+$/.test(t));
+  const gIdx = numTok ? Number(numTok) : null;
+  const results = [];
+  let base = 0;
+  g.stacks.forEach((stack, si) => {
+    let li = 0;
+    if (gIdx !== null && gIdx >= base && gIdx < base + stack.count) li = gIdx - base;
+    else if (gIdx !== null && (gIdx < base || gIdx >= base + stack.count)) { base += stack.count; return; }
+    const layerIdx = base + li;
+    for (const seg of stack.segments) {
+      const cands = [
+        ...(seg.tensors || []),
+        ...(seg.routerTensors || []),
+        ...(seg.expertProto ? seg.expertProto.tensors : []),
+      ];
+      for (const t of cands) {
+        const name = t.name.replace('{i}', String(layerIdx)).replace('{j}', '0');
+        const lower = name.toLowerCase();
+        if (textToks.every((tok) => lower.includes(tok))) {
+          results.push({ name, si, li, segLabel: seg.label, role: t.role, meta: `Layer ${layerIdx} · ${seg.label}` });
+        }
+      }
+    }
+    base += stack.count;
+  });
+  // global tensors
+  const globals = [
+    { name: g.embedding.tensors[0].name, path: 'embed_tokens', meta: 'Embedding' },
+    { name: 'lm_head.weight', path: 'lm_head', meta: 'LM Head' },
+  ];
+  for (const t of globals) {
+    if (textToks.length && textToks.every((tok) => t.name.toLowerCase().includes(tok))) {
+      results.push({ name: t.name, path: t.path, meta: t.meta });
+    }
+  }
+  return results.slice(0, 8);
+}
+function jumpToResult(r) {
+  $('searchResults').hidden = true;
+  $('searchInput').value = '';
+  if (r.path) { handleNav('path:' + r.path); return; }
+  expandLayer(r.si, r.li);
+  const target = findItem((it) => it.si === r.si && it.li === r.li && it.segLabel === r.segLabel &&
+    (it.role === r.role || it.role === undefined)) ||
+    findItem((it) => it.si === r.si && it.li === r.li && it.segLabel === r.segLabel);
+  if (target) { pinItem(target); if (state.viewMode === '3d') flyToItem(target); }
+}
+$('searchInput').addEventListener('input', () => {
+  const res = searchModel($('searchInput').value);
+  const box = $('searchResults');
+  if (!res.length) { box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = res.map((r, i) =>
+    `<button class="sr-item" data-sr="${i}">${r.name}<br><span class="sr-meta">${r.meta}</span></button>`).join('');
+  box.querySelectorAll('[data-sr]').forEach((el) => {
+    el.onclick = () => jumpToResult(res[Number(el.dataset.sr)]);
+  });
+});
+$('searchInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const res = searchModel($('searchInput').value);
+    if (res.length) jumpToResult(res[0]);
+  }
+  if (e.key === 'Escape') { $('searchResults').hidden = true; $('searchInput').blur(); }
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.search-box')) $('searchResults').hidden = true;
 });
 $('inspector').addEventListener('input', (e) => {
   const t = e.target;
@@ -259,10 +389,17 @@ $('inspector').addEventListener('input', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
+  const typing = ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName);
+  if (tourState.active && !typing) {
+    if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); gotoStation(tourState.i + 1); return; }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); gotoStation(tourState.i - 1); return; }
+    if (e.key === 'Escape') { endTour(); return; }
+  }
   if (e.key === 'Escape') {
     if (state.pinned) clearPin();
     $('modal').classList.remove('open');
   }
+  if (e.key === '/' && !typing) { e.preventDefault(); $('searchInput').focus(); }
 });
 
 // ---------------------------------------------------------------------------
@@ -479,6 +616,11 @@ function loadConfig(config, source) {
   state.focus = false;
   state.kvCtx = null;
   stopAnim();
+  if (typeof tourState !== 'undefined' && tourState.active) {
+    tourState.active = false;
+    $('tourBar').hidden = true;
+    $('btnTour').textContent = '🎬 游览';
+  }
   state.cellMode = graph.meta.tier === 'T3' ? 0 : 1;
   const lodSel = document.getElementById('lodSelect');
   if (lodSel) lodSel.value = String(state.cellMode);
@@ -639,6 +781,15 @@ $('fileInput').onchange = async (e) => {
 };
 async function importFile(file) {
   try {
+    if (/\.safetensors$/i.test(file.name)) {
+      status('读取 safetensors 文件头(仅头部,权重不加载)…', 10000);
+      const tensors = await readSafetensorsFile(file);
+      const { config, notes } = inferConfigFromTensors(tensors, file.name);
+      loadConfig(config, { kind: 'manual', name: file.name + '(本地推断)', verified: true });
+      status(`已从 ${tensors.length} 个张量推断架构 · ` + notes[0], 9000);
+      console.info('safetensors 推断说明:\n- ' + notes.join('\n- '));
+      return;
+    }
     const doc = parseLlmarch(await file.text());
     loadConfig(doc.config, doc.source);
     if (doc.view) restoreView(doc.view);
@@ -696,7 +847,7 @@ try {
 window.addEventListener('resize', () => requestRender());
 
 // debug/test hook
-window.__viz = { state, applyAction, rebuild, camera, pinItem, clearPin, expandLayer };
+window.__viz = { state, applyAction, rebuild, camera, pinItem, clearPin, expandLayer, handleNav, startTour, gotoStation, endTour, tourState, searchModel, jumpToResult };
 
 // ---------------------------------------------------------------------------
 // Boot
