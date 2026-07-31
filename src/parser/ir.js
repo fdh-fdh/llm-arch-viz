@@ -7,6 +7,54 @@ function sumTensors(tensors) {
   return (tensors || []).reduce((a, t) => a + t.params, 0);
 }
 
+// FR-B3: attach knowledge keys (see src/knowledge.js) without touching adapters.
+function knowledgeKeys(seg) {
+  if (seg.kind === 'norm') {
+    const ln = /LayerNorm/i.test(seg.label) || (seg.tensors || []).some((t) => t.role === 'bias');
+    return [ln ? 'layernorm' : 'rmsnorm'];
+  }
+  if (seg.kind === 'attn') {
+    const keys = ['attention_core'];
+    if (seg.meta.variant === 'GQA') keys.push('gqa');
+    else if (seg.meta.variant === 'MQA') keys.push('mqa');
+    else if (seg.meta.variant === 'MLA') keys.push('mla');
+    if (seg.meta.qkNorm) keys.push('qk_norm');
+    if (seg.meta.ropeTheta) keys.push('rope');
+    if (seg.meta.learnedPos) keys.push('pos_embedding_learned');
+    keys.push('causal_mask');
+    return keys;
+  }
+  if (seg.kind === 'mlp') return [seg.meta.gated ? 'swiglu' : 'gelu_mlp'];
+  if (seg.kind === 'moe') {
+    const keys = ['moe_router', 'moe_expert'];
+    if (seg.sharedProto) keys.push('shared_expert');
+    return keys;
+  }
+  if (seg.kind === 'add') return ['residual'];
+  return [];
+}
+
+// KV cache bytes per token across all layers (bf16 = 2 bytes). MLA caches the
+// compressed latent (kv_lora + rope channel) instead of full K/V.
+export function kvCacheBytesPerToken(graph, bytesPerVal = 2) {
+  let per = 0;
+  for (const stack of graph.stacks) {
+    const attn = stack.segments.find((s) => s.kind === 'attn');
+    if (!attn) continue;
+    const m = attn.meta;
+    const perLayer = m.variant === 'MLA'
+      ? (m.kvLora + (graph.rawConfig?.qk_rope_head_dim || 64))
+      : 2 * m.kvHeads * m.headDim;
+    per += perLayer * stack.count;
+  }
+  return per * bytesPerVal;
+}
+
+// Rough matmul FLOPs per generated token ≈ 2 × active weight params (excl. embedding lookup).
+export function flopsPerToken(graph) {
+  return 2 * Math.max(0, graph.meta.params.active - graph.meta.params.embedding);
+}
+
 function segmentParams(seg) {
   if (seg.kind === 'moe') {
     const router = sumTensors(seg.routerTensors);
@@ -44,7 +92,7 @@ export function buildGraph(config, source = { kind: 'manual' }) {
       perLayer += p.total;
       perLayerActive += p.active;
       if (seg.kind === 'moe') maxExperts = Math.max(maxExperts, seg.meta.experts);
-      return { ...seg, paramInfo: p };
+      return { ...seg, paramInfo: p, kb: knowledgeKeys(seg) };
     });
     layersTotal += perLayer * stack.count;
     layersActive += perLayerActive * stack.count;

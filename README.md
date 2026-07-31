@@ -9,6 +9,27 @@ GQA / MoE / MLA 结构、逐张量 shape 与参数量、折叠/展开、数据�
 
 ## 功能
 
+### v2(分支 `v2/inspector-lod`)新增
+
+- **Inspector 实时窗口**:悬停即显、点击钉住、面包屑导航(模型›Layer›组件›张量)、点击列表反向飞镜头;每个组件带数学公式(零依赖 HTML/CSS 公式渲染)、直觉解释与论文引用(20+ 条知识库);GQA 分组小图、KV cache 随 ctx 滑杆、每 token FLOPs
+- **元素级细节(LOD4)**:任意矩阵贴近即见元素格(片元着色器程序化生成,内存零增量),悬停显示 `W[row, col]` 与行列语义,Shift+点击钉住单个元素;attention 矩阵按 head/KV 组着色分带
+- **聚焦模式**:点击组件相机平滑飞至,其余降饱和,Esc 退出
+
+### v2.2(分支 `v2.2/lod`)新增
+
+- **残差旁路可见**:展开层内画出残差流的"出线-旁路-汇入 ⊕"轨道(bbycroft 式数据流拓扑)
+- **γ/β 独立细条**:LayerNorm 的 γ 与 β 渲染为两根并排细条(RMSNorm 只有 γ),逐维可悬停
+- **LOD 手动档**:工具栏"格子:自动/增强/关闭"——增强模式在更远距离保持元素格可见;T3 超大模型默认关闭(聚焦时可手动开)
+- **MLP 神经元分带**:gate/up 矩阵沿 intermediate 轴显示 8 段神经元分组色带
+
+### v2.3(分支 `v2.3/tour`)新增
+
+- **引导游览**:🎬 按钮开启 bbycroft 式 walkthrough——站点由 IR 自动生成(输入→Embedding→Norm→注意力→残差→MoE 路由/专家→…→logits,MoE 模型 15 站左右),每站相机飞至 + Inspector 讲解 + 一句导语;←/→/空格导航,DeepSeek 这类"dense 前置 + MoE 主体"结构会分别走两种层
+- **张量搜索**:侧栏搜索框(快捷键 /),`37 k_proj` 直达第 37 层的 k_proj——自动展开该层、钉住并飞达
+- **2D 视图接入 Inspector**:2D 分层图的块可点击,与 3D 共用同一选择状态——移动端也有完整讲解体验
+- **本地 safetensors 导入**:拖入 .safetensors 只读文件头(权重零上传、零加载),从张量名/shape 启发式推断架构(llama/qwen/qwen-MoE/Mixtral/GPT-2 命名),推断项在控制台列明
+
+
 - **连接 HuggingFace**:输入 repo id → 自动拉取 config.json(gated 模型可填 HF token,仅存本机)
 - **适配器注册表**:llama 系(mistral/qwen2/qwen3/gemma/phi…)、qwen2/3-MoE、Mixtral、DeepSeek-V2/V3(MLA)、GPT-2;未知 model_type 走通用兜底解析(UI 明示降级)
 - **重复结构去重**:N 个相同层折叠为 "×N" 聚合体,点击懒展开;MoE 专家默认聚合、点击展开专家网格;单 InstancedDraw 渲染(全场景 1 个 draw call)
